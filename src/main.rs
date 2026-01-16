@@ -250,7 +250,19 @@ impl App {
     }
 
     fn refresh_flat_nodes(&mut self) {
+        // Save currently selected topic path
+        let selected_path = self.list_state.selected().and_then(|idx| {
+            self.flat_nodes.get(idx).map(|node| node.full_path.clone())
+        });
+
         self.flat_nodes = self.topic_tree.flatten(0, &self.expanded_paths);
+
+        // Restore selection by finding the same topic path
+        if let Some(path) = selected_path {
+            if let Some(new_idx) = self.flat_nodes.iter().position(|n| n.full_path == path) {
+                self.list_state.select(Some(new_idx));
+            }
+        }
     }
 
     fn toggle_expand(&mut self) {
@@ -414,8 +426,14 @@ async fn run_app(
                                     // Keep existing filter for editing, disable active filtering while editing
                                     app.filter_active = false;
                                 }
-                                KeyCode::Up | KeyCode::Char('k') => app.move_up(),
-                                KeyCode::Down | KeyCode::Char('j') => app.move_down(),
+                                KeyCode::Up | KeyCode::Char('k') => {
+                                    app.move_up();
+                                    app.message_scroll = u16::MAX; // Show latest messages
+                                }
+                                KeyCode::Down | KeyCode::Char('j') => {
+                                    app.move_down();
+                                    app.message_scroll = u16::MAX; // Show latest messages
+                                }
                                 KeyCode::Enter | KeyCode::Char(' ') => app.toggle_expand(),
                                 KeyCode::Left | KeyCode::Char('h') => {
                                     // Collapse current node
@@ -436,7 +454,7 @@ async fn run_app(
                                             } else {
                                                 // Already expanded or no children - move to messages pane
                                                 app.focused_pane = FocusedPane::Messages;
-                                                app.message_scroll = 0;
+                                                app.message_scroll = u16::MAX; // Show latest messages
                                             }
                                         }
                                     }
@@ -521,6 +539,19 @@ async fn run_app(
     Ok(())
 }
 
+/// Check if a string contains non-printable binary data
+fn is_binary(s: &str) -> bool {
+    s.bytes().any(|b| b < 0x20 && b != b'\t' && b != b'\n' && b != b'\r')
+}
+
+/// Format binary data as hex string
+fn format_as_hex(s: &str) -> String {
+    s.bytes()
+        .map(|b| format!("{:02X}", b))
+        .collect::<Vec<_>>()
+        .join("\u{00A0}")
+}
+
 fn ui(f: &mut Frame, app: &App) {
     // Main layout: content area on top, status bar at bottom
     let main_chunks = Layout::vertical([
@@ -595,9 +626,14 @@ fn ui(f: &mut Frame, app: &App) {
         history
             .iter()
             .filter_map(|msg| {
-                // Replace newlines in payload to keep timestamp and message on same logical line
-                // Replace spaces with non-breaking spaces to force character-level wrapping
-                let clean_payload = msg.payload.replace('\n', "\\n").replace('\r', "\\r").replace(' ', "\u{00A0}");
+                // Check if payload is binary, format as hex if so
+                let clean_payload = if is_binary(&msg.payload) {
+                    format_as_hex(&msg.payload)
+                } else {
+                    // Replace newlines in payload to keep timestamp and message on same logical line
+                    // Replace spaces with non-breaking spaces to force character-level wrapping
+                    msg.payload.replace('\n', "\\n").replace('\r', "\\r").replace(' ', "\u{00A0}")
+                };
                 let line_text = format!("[{}]\u{00A0}{}", msg.format_timestamp(), clean_payload);
 
                 // If filter is active (Enter was pressed), only show matching lines
