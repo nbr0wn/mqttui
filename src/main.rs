@@ -130,12 +130,35 @@ impl TopicNode {
         }
     }
 
-    fn flatten(&self, depth: usize, expanded_set: &HashSet<String>) -> Vec<FlatNode> {
+    /// Count direct child topics (subtopics)
+    fn count_subtopics(&self) -> usize {
+        self.children.len()
+    }
+
+    /// Recursively count all messages in this node and all descendants
+    fn count_all_messages(&self, message_history: &HashMap<String, Vec<TimestampedMessage>>) -> usize {
+        let own_messages = message_history
+            .get(&self.full_path)
+            .map(|v| v.len())
+            .unwrap_or(0);
+
+        let child_messages: usize = self
+            .children
+            .values()
+            .map(|child| child.count_all_messages(message_history))
+            .sum();
+
+        own_messages + child_messages
+    }
+
+    fn flatten(&self, depth: usize, expanded_set: &HashSet<String>, message_history: &HashMap<String, Vec<TimestampedMessage>>) -> Vec<FlatNode> {
         let mut result = Vec::new();
 
         for (_, child) in &self.children {
             let is_expanded = expanded_set.contains(&child.full_path);
             let has_children = !child.children.is_empty();
+            let subtopic_count = child.count_subtopics();
+            let message_count = child.count_all_messages(message_history);
 
             result.push(FlatNode {
                 name: child.name.clone(),
@@ -144,10 +167,12 @@ impl TopicNode {
                 has_children,
                 expanded: is_expanded,
                 has_messages: child.has_messages,
+                subtopic_count,
+                message_count,
             });
 
             if is_expanded && has_children {
-                result.extend(child.flatten(depth + 1, expanded_set));
+                result.extend(child.flatten(depth + 1, expanded_set, message_history));
             }
         }
 
@@ -163,6 +188,8 @@ struct FlatNode {
     has_children: bool,
     expanded: bool,
     has_messages: bool,
+    subtopic_count: usize,
+    message_count: usize,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -235,17 +262,6 @@ impl App {
                 .push(msg);
         }
 
-        // Auto-expand new paths
-        let parts: Vec<&str> = topic.split('/').collect();
-        let mut path = String::new();
-        for part in parts {
-            if !path.is_empty() {
-                path.push('/');
-            }
-            path.push_str(part);
-            self.expanded_paths.insert(path.clone());
-        }
-
         self.refresh_flat_nodes();
     }
 
@@ -255,7 +271,7 @@ impl App {
             self.flat_nodes.get(idx).map(|node| node.full_path.clone())
         });
 
-        self.flat_nodes = self.topic_tree.flatten(0, &self.expanded_paths);
+        self.flat_nodes = self.topic_tree.flatten(0, &self.expanded_paths, &self.message_history);
 
         // Restore selection by finding the same topic path
         if let Some(path) = selected_path {
@@ -589,11 +605,30 @@ fn ui(f: &mut Frame, app: &App) {
                 Style::default().fg(Color::White)
             };
 
-            let line = Line::from(vec![
+            // Build count indicators
+            let mut spans = vec![
                 Span::raw(indent),
                 Span::styled(prefix, Style::default().fg(Color::Yellow)),
                 Span::styled(&node.name, style),
-            ]);
+            ];
+
+            // Add subtopic count if this node has children
+            if node.subtopic_count > 0 {
+                spans.push(Span::styled(
+                    format!(" ({} topics)", node.subtopic_count),
+                    Style::default().fg(Color::DarkGray),
+                ));
+            }
+
+            // Add message count (includes all messages from subtopics)
+            if node.message_count > 0 {
+                spans.push(Span::styled(
+                    format!(" ({} msgs)", node.message_count),
+                    Style::default().fg(Color::Cyan),
+                ));
+            }
+
+            let line = Line::from(spans);
 
             ListItem::new(line)
         })
