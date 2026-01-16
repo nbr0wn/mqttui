@@ -1,0 +1,13 @@
+[package]
+name = "mqttui"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+ratatui = "0.28"
+crossterm = "0.28"
+rumqttc = "0.24"
+clap = { version = "4", features = ["derive"] }
+tokio = { version = "1", features = ["full"] }
+anyhow = "1"
+regex = "1"
