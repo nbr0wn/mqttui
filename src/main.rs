@@ -748,11 +748,26 @@ fn ui(f: &mut Frame, app: &App) {
         .border_style(Style::default().fg(messages_border_color));
 
     // Clamp scroll to valid range - only allow scrolling if content exceeds visible height
-    // Subtract 2 for top and bottom borders
+    // Subtract 2 for top and bottom borders, and 2 for left and right borders
     let visible_height = content_chunks[1].height.saturating_sub(2) as usize;
-    let content_lines = payload_content.lines.len();
-    let max_scroll = if content_lines > visible_height {
-        (content_lines - visible_height) as u16
+    let visible_width = content_chunks[1].width.saturating_sub(2) as usize;
+
+    // Calculate actual wrapped line count by summing up how many visual lines each logical line takes
+    let wrapped_line_count: usize = payload_content
+        .lines
+        .iter()
+        .map(|line| {
+            let line_width: usize = line.spans.iter().map(|s| s.content.chars().count()).sum();
+            if line_width == 0 || visible_width == 0 {
+                1
+            } else {
+                (line_width + visible_width - 1) / visible_width // ceiling division
+            }
+        })
+        .sum();
+
+    let max_scroll = if wrapped_line_count > visible_height {
+        (wrapped_line_count - visible_height) as u16
     } else {
         0
     };
